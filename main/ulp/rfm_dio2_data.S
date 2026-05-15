@@ -42,6 +42,9 @@
 
     .bss
 
+    .global state
+state:
+    .long 0             // 0 = no, in progress, 1 = RXOK, 2 = FAIL
     // 2 x 16-bit values
     .global value
 value:  
@@ -51,17 +54,7 @@ value:
     .text
 
     .global entry
-entry:                  
-    // "Set to 1, then that pin i/o is routed to the RTC subsystem" 
-    WRITE_RTC_REG(RTC_IO_TOUCH_PAD7_REG, RTC_IO_TOUCH_PAD7_MUX_SEL_S, 1, 1)
-
-    // Allow low level GPIO setting
-    WRITE_RTC_REG(RTC_GPIO_ENABLE_W1TS_REG, RTC_GPIO_ENABLE_W1TS_S + GPIO_RX_DONE, 1, 1)
-
-    // ULP started flag via GPIO
-    WRITE_RTC_REG(RTC_GPIO_OUT_W1TS_REG, RTC_GPIO_OUT_DATA_W1TS_S + GPIO_RX_DONE, 1, 1)
-
-read:                   // (42 cycles)
+entry:                  // (42 cycles)
                         // (8) Read GPIO low bank
     READ_RTC_REG(RTC_GPIO_IN_REG, RTC_GPIO_IN_NEXT_S, 16)
     rsh r0, r0, DIO2    // (6) Shift to GPIO
@@ -72,14 +65,13 @@ read:                   // (42 cycles)
     jump loop, eq       // (4) If not an edge, loop
 
 edge:                   // Level change
-    
-    jumps exit, 240, GE // Timeout    (>4.8ms)
+    jumps flag, 240, GE // Timeout    (>4.8ms)
     jumps lead, 30,  LE // Lead pulse (<0.6ms)
     jumps data, 120, LE // Data pulse (<2.4ms)
 
 sync:                   // Sync pulse (<4.8ms)
     move r0, r3         // Get bit count
-    jumpr exit, 36, EQ  // Quit if 36 bits then sync bit
+    jumpr rxok, 36, EQ  // Quit if 36 bits then sync bit
 
 reset:                  // Reset everything
     move r3, 0          // Reset bit count
@@ -97,8 +89,8 @@ lead:                   // Lead pulse - soft reset
 loop:                   // (20 cycles)
     wait 288            // (6) 288 + 20 + 42 = 350 cycles = 20ms
     stage_inc 1         // (6) Timer increment
-    jumps exit, 240, GE // (4) break()
-    jump read           // (4) Read again
+    jumps flag, 240, GE // (4) break()
+    jump entry          // (4) Read again
 
 data:                   // Valid bit
     add r3, r3, 1       // Increment bit count
@@ -135,16 +127,39 @@ lsb0:
     stage_rst           // Reset timer
     jump loop           // Continue
 
-exit:
-    stage_rst           // Reset the timer
+rxok:
+    stage_rst           // Reset timer
 
 coda:                   // loop of 3.7ms exactly
     wait 64734          // (6) 16 + 64734 = 64750 = 3.7.ms
     stage_inc 1         // (6) Increment counter
     jumps coda, 175, LE // (4) 175 x 3.7ms = 647.5ms = 92.5ms x 7 repeats
+    move r1, 1          // Set state to RXOK
+    move r0, state      // r0 <- var address
+    st r1, r0, 0        // r1 -> r0 data save 
 
-    // ULP finished flag via GPIO
-    WRITE_RTC_REG(RTC_GPIO_OUT_W1TC_REG, RTC_GPIO_OUT_DATA_W1TC_S + GPIO_RX_DONE, 1, 1)
+flag:                   // Notify main code of state
+    // "Set to 1, then that pin i/o is routed to the RTC subsystem" 
+    WRITE_RTC_REG(RTC_IO_TOUCH_PAD7_REG, RTC_IO_TOUCH_PAD7_MUX_SEL_S, 1, 1)
+
+    // Allow low level GPIO setting
+    WRITE_RTC_REG(RTC_GPIO_ENABLE_W1TS_REG, RTC_GPIO_ENABLE_W1TS_S + GPIO_RX_DONE, 1, 1)
+
+    // ULP started flag via GPIO
+    WRITE_RTC_REG(RTC_GPIO_OUT_W1TS_REG, RTC_GPIO_OUT_DATA_W1TS_S + GPIO_RX_DONE, 1, 1)
+
+    move r0, state      // r0 <- var address
+    ld r1, r0, 0        // r1 <- r0 data load
+    and r1, r1, 1       // r1 == 1
+    jump exit, eq        // If already RXOK, exit 
+
+    move r0, state      // r0 <- var address
+    move r1, 2          // Set state to FAIL
+    st r1, r0, 0        // r1 -> r0 data save
+
+exit:
     // Cancel sleep
     WRITE_RTC_FIELD(RTC_CNTL_ULP_CP_TIMER_REG, RTC_CNTL_ULP_CP_SLP_TIMER_EN, 0)
+    // signal low to indicate a RX has been done
+    WRITE_RTC_REG(RTC_GPIO_OUT_W1TC_REG, RTC_GPIO_OUT_DATA_W1TC_S + GPIO_RX_DONE, 1, 1)
     halt                // Stop

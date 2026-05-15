@@ -41,10 +41,11 @@ extern const uint8_t bin_end[]   asm("_binary_ulp_rfm_dio2_data_bin_end");
 #define RFM69HCW_FSCK   SPI_MASTER_FREQ_8M
 
 // RFM Radio Configuration
-#define FREQUENCY       433730000
+#define FREQUENCY       433910000
 #define BITRATE         2000
 
 // Flag to indicate ULP has finished processing
+volatile bool gpio_rssi_flag = 0;
 volatile bool ulp_rx_done_flag = 0;
 
 /**
@@ -53,6 +54,7 @@ volatile bool ulp_rx_done_flag = 0;
  */
 static void IRAM_ATTR dio0_rssi_isr(void *arg) {
     esp_err_t err;
+    gpio_rssi_flag = 1;
     err = ulp_run(&ulp_entry - RTC_SLOW_MEM);
     ESP_ERROR_CHECK(err);
 }
@@ -63,8 +65,10 @@ static void IRAM_ATTR dio0_rssi_isr(void *arg) {
  */
 static void IRAM_ATTR rx_done_isr(void *arg) {
     spi_device_handle_t spi = (spi_device_handle_t)arg;
-    ulp_rx_done_flag = 1;
-
+    if (ulp_state == 2) {
+        ulp_rx_done_flag = 1;
+    }
+    ulp_state = 0;
     rfm_rxrestart(spi);
 }   
 
@@ -83,7 +87,6 @@ static void init_rtc_and_ulp(void)
      */
     gpio_num_t gpio_num = PIN_NUM_DIO2;
     assert(rtc_gpio_is_valid_gpio(gpio_num) && "Not a valid RTC GPIO");
-    printf("[ESP32-ULP] GPIO_%d = RTC_IO_%d\n", gpio_num, rtc_io_number_get(gpio_num));
 
     // Initialise GPIO as RTC GPIO
     err = rtc_gpio_init(gpio_num);
@@ -102,7 +105,6 @@ static void init_rtc_and_ulp(void)
      */
     gpio_num = GPIO_RX_DONE;
     assert(rtc_gpio_is_valid_gpio(gpio_num) && "Not a valid RTC GPIO");
-    printf("[ESP32-ULP] GPIO_%d = RTC_IO_%d\n", gpio_num, rtc_io_number_get(gpio_num));
 
     // Initialise GPIO as RTC GPIO
     err = rtc_gpio_init(gpio_num);
@@ -173,9 +175,15 @@ void app_main(void)
     gpio_set_intr_type(GPIO_RX_DONE, GPIO_INTR_NEGEDGE);
     gpio_pulldown_en(GPIO_RX_DONE);
 
+    // Initialise the RFM69HCW Radio before ISRs are initialised
+    rfm_init(spi, PIN_NUM_RST, FREQUENCY, BITRATE);
+
     // Set up interrupt service
     err = gpio_install_isr_service(0);
     ESP_ERROR_CHECK(err);
+   
+    // Set up RTC & ULP
+    init_rtc_and_ulp();
 
     // Attach the interrupt service routine, dio0_rssi_isr(), to DIO0
     err = gpio_isr_handler_add(PIN_NUM_DIO0, dio0_rssi_isr, NULL);
@@ -184,15 +192,16 @@ void app_main(void)
     // Attach the interrupt service routine, rx_done_isr(), to GPIO_RX_DONE
     err = gpio_isr_handler_add(GPIO_RX_DONE, rx_done_isr, (void*)spi);
     ESP_ERROR_CHECK(err);
-    
-    // Set up RTC & ULP
-    init_rtc_and_ulp();
 
-    // Initialise the RFM69HCW Radio
-    rfm_init(spi, PIN_NUM_RST, FREQUENCY, BITRATE);
+    // printf("RSSI: -0x%02x dBm\n", rfm_calibrate_rssi_threshold(spi));
 
     while(1)
     {   
+        if (gpio_rssi_flag) {
+            printf("[RFM69] RSSI Detected\n");
+            gpio_rssi_flag = 0;
+        }
+
         // RFM Receive Processed
         if (ulp_rx_done_flag) {
             ulp_rx_done_flag = 0;

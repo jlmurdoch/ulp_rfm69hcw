@@ -46,6 +46,34 @@ uint8_t rfm_read_single(spi_device_handle_t spi, uint8_t reg) {
     return buf;
 }
 
+uint8_t rfm_get_background_rssi(spi_device_handle_t spi) {
+    uint8_t rssi_readings[11];
+
+    // check mode
+    if (rfm_read_single(spi, 0x01) != 0x10) {
+       printf("[RFM69] RSSI Threshold Calibration: FAILED - Not in Receiver Mode\n");
+       return 0xc0; 
+    }
+
+    // Read the RSSI value
+    for (int i = 0; i < 11; i++) {
+        rfm_write_single(spi, 0x29, 0xFF); // Set high threshold to ensure detection
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        rfm_write_single(spi, 0x23, 0x01); // RSSIStart
+
+        while(rfm_read_single(spi, 0x23) & 0x0); // Wait for RSSIDone
+        rssi_readings[i] = rfm_read_single(spi, 0x24); // Read RSSIValue
+    }
+
+    qsort(rssi_readings, 11, sizeof(uint8_t), (int (*)(const void *, const void *))strcmp);
+
+    // Set RSSI -3db above noise floor 
+    rfm_write_single(spi, 0x29, rssi_readings[5] - 3);
+
+    // Find median RSSI value 
+    return rssi_readings[5];    
+}
+
 /**
  * @brief RFM Write with single byte
  * @param spi SPI Device Handle
@@ -98,9 +126,9 @@ void rfm_init(spi_device_handle_t spi, gpio_num_t gpio_rst, uint32_t frequency, 
     rfm_write_single(spi, 0x09, raw_freq & 0xFF);
 
     // Bandwidth
-    rfm_write_single(spi, 0x19, DCCFREQ_4 << 5 | RXBWMANT_24 << 3 | RXBWEXP_0);
+    rfm_write_single(spi, 0x19, DCCFREQ_4 << 5 | RXBWMANT_16 << 3 | RXBWEXP_1);
     // AFC bandwidth
-    rfm_write_single(spi, 0x1A, DCCFREQ_4 << 5 | RXBWMANT_24 << 3 | RXBWEXP_0);
+    rfm_write_single(spi, 0x1A, DCCFREQ_4 << 5 | RXBWMANT_16 << 3 | RXBWEXP_1);
 
     // OOK
     rfm_write_single(spi, 0x1B, 0x40); // OOK Peak
@@ -112,11 +140,25 @@ void rfm_init(spi_device_handle_t spi, gpio_num_t gpio_rst, uint32_t frequency, 
 
     // Optional RSSI signaling
     rfm_write_single(spi, 0x25, 0x80); // Pin Mapping: DIO0 = RSSI
-    rfm_write_single(spi, 0x29, 0xA0); // RSSI Threshold
+    rfm_write_single(spi, 0x58, 0x2D); // Sensitivity boost
 
     // Bring RFM out of standby into receiving mode
     rfm_write_single(spi, 0x01, 0x10); // Set receiver mode
     while(!((rfm_read_single(spi, 0x27)) >> 7)); // Wait for Mode Ready
+
+    // Get background RSSI for threshold calibration
+    uint8_t bg_rssi = rfm_get_background_rssi(spi);
+
+    // Set threshold in standby
+    rfm_write_single(spi, 0x01, 0x04); // Set Standby
+    while(!((rfm_read_single(spi, 0x27)) >> 7)); // Wait for Mode Ready
+    rfm_write_single(spi, 0x29, bg_rssi - 2); // RSSI Threshold
+
+    // Bring RFM out of standby into receiving mode
+    rfm_write_single(spi, 0x01, 0x10); // Set receiver mode
+    while(!((rfm_read_single(spi, 0x27)) >> 7)); // Wait for Mode Ready     
+
+    printf("[RFM69] Initialised. RSSI Threshold: 0x%02x\n", bg_rssi - 2);
 }
 
 /**
