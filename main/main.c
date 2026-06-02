@@ -44,6 +44,11 @@ extern const uint8_t bin_end[]   asm("_binary_ulp_rfm_dio2_data_bin_end");
 #define FREQUENCY       433910000
 #define BITRATE         2000
 
+#if WITH_LVGL_DISPLAY
+#include "lvgl.h"
+#include "lvgl/lvgl_ui.h"
+#endif 
+
 // Flag to indicate ULP has finished processing
 volatile bool gpio_rssi_flag = 0;
 volatile bool ulp_rx_done_flag = 0;
@@ -145,6 +150,29 @@ void app_main(void)
     err = spi_bus_initialize(RFM69HCW_HOST, &buscfg, SPI_DMA_CH_AUTO);
     ESP_ERROR_CHECK(err);
 
+#if WITH_LVGL_DISPLAY
+    /*
+     * LCD Setup
+     */
+    // Pull power high
+    gpio_set_direction(GPIO_NUM_21, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_21, 1);
+
+    // Backlight high
+    gpio_set_direction(GPIO_NUM_45, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_45, 1);
+
+    lv_display_t *lvgl_disp = NULL;
+    lvgl_display_init(lvgl_disp);
+
+    lvgl_port_lock(0);
+    lvgl_main();
+    lvgl_port_unlock();
+#endif
+
+    /*
+     * RFM Setup
+     */
     // Initialise the SPI device
     spi_device_interface_config_t devcfg = {
         .command_bits = 8,
@@ -193,8 +221,6 @@ void app_main(void)
     err = gpio_isr_handler_add(GPIO_RX_DONE, rx_done_isr, (void*)spi);
     ESP_ERROR_CHECK(err);
 
-    // printf("RSSI: -0x%02x dBm\n", rfm_calibrate_rssi_threshold(spi));
-
     while(1)
     {   
         if (gpio_rssi_flag) {
@@ -221,6 +247,12 @@ void app_main(void)
                             (((uint16_t)(&ulp_value)[1] >> 8) & 0xFF)) * 0.1;
             uint8_t humidity = ((uint16_t)(&ulp_value)[1] & 0xFF);
 
+#if WITH_LVGL_DISPLAY
+            lvgl_port_lock(0);
+            lv_subject_set_int(&relh_subj, humidity);
+            lv_subject_set_float(&temp_subj, temp);
+            lvgl_port_unlock();
+#endif
             printf("Sensor - Id: 0x%02x, Bat: %d, Man: %d, Ch: %d, Temp: %.1f°C, RH: %d%%\n", 
                 id, battery, manual, channel, temp, humidity);
         }

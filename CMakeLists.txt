@@ -4,3 +4,4 @@ cmake_minimum_required(VERSION 3.22)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(ulp_rfm69hcw)
+idf_build_set_property(COMPILE_DEFINITIONS WITH_LVGL_DISPLAY APPEND)

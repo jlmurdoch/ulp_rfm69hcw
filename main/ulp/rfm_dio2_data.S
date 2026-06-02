@@ -140,7 +140,7 @@ coda:                   // loop of 3.7ms exactly
 
 flag:                   // Notify main code of state
     // "Set to 1, then that pin i/o is routed to the RTC subsystem" 
-    WRITE_RTC_REG(RTC_IO_TOUCH_PAD7_REG, RTC_IO_TOUCH_PAD7_MUX_SEL_S, 1, 1)
+    WRITE_RTC_REG(RTC_IO_TOUCH_PAD2_REG, RTC_IO_TOUCH_PAD2_MUX_SEL_S, 1, 1)
 
     // Allow low level GPIO setting
     WRITE_RTC_REG(RTC_GPIO_ENABLE_W1TS_REG, RTC_GPIO_ENABLE_W1TS_S + GPIO_RX_DONE, 1, 1)

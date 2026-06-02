@@ -1,6 +1,10 @@
-.DS_Store
-build/
-.clangd
+# VS Code
 .devcontainer/
 .vscode/
+
+# ESP-IDF
+build/
+managed_components/
+.clangd
+dependencies.lock
 sdkconfig*
