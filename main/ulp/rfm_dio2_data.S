@@ -51,6 +51,10 @@ value:
     .long 0             // ulp_value[0]
     .long 0             // ulp_value[1]
 
+last_val:               // Used for double-checking
+    .long 0
+    .long 0
+
     .text
 
     .global entry
@@ -127,8 +131,32 @@ lsb0:
     stage_rst           // Reset timer
     jump loop           // Continue
 
+store:
+    move r0, value
+    ld r1, r0, 0
+    move r0, last_val
+    st r1, r0, 0        // store value[0] to last_val[0]
+    move r0, value
+    ld r1, r0, 4
+    move r0, last_val   // store value[1] to last_val[1]
+    st r1, r0, 4
+    jump entry
+
 rxok:
     stage_rst           // Reset timer
+    move r0, value
+    ld r1, r0, 0
+    move r0, last_val
+    ld r2, r0, 0
+    sub r0, r1, r2      // Compare value[0] with last value[0]
+    jumpr store, 1, ge
+
+    move r0, value
+    ld r1, r0, 4
+    move r0, last_val
+    ld r2, r0, 4
+    sub r0, r1, r2      // Compare value[1] with last value[1]
+    jumpr store, 1, ge
 
 coda:                   // loop of 3.7ms exactly
     wait 64734          // (6) 16 + 64734 = 64750 = 3.7.ms
